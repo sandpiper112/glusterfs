@@ -6751,8 +6751,8 @@ rpc_clnt_procedure_t clnt4_0_fop_actors[GF_FOP_MAXVALUE] = {
         [GF_FOP_GETACTIVELK]  = { "GETACTIVELK", client3_3_getactivelk},
         [GF_FOP_SETACTIVELK]  = { "SETACTIVELK", client3_3_setactivelk},
         [GF_FOP_COMPOUND]     = { "COMPOUND",     client3_3_compound },
-        [GFS3_OP_ICREATE]     = { "ICREATE", client3_3_icreate},
-        [GFS3_OP_NAMELINK]    = { "NAMELINK", client3_3_namelink},
+        [GF_FOP_ICREATE]     = { "ICREATE", client3_3_icreate},
+        [GF_FOP_NAMELINK]    = { "NAMELINK", client3_3_namelink},
 };
 
 
