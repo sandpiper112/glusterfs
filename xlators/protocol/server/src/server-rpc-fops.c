@@ -152,7 +152,9 @@ server_lookup_cbk (call_frame_t *frame, void *cookie, xlator_t *this,
                                 forget_inode_if_no_dentry (state->loc.inode);
                         }
                 }
-                goto out;
+
+                if (op_errno != EREMOTE)
+                        goto out;
         }
 
         server_post_lookup (&rsp, frame, state, inode, stbuf, postparent);
@@ -6829,7 +6831,7 @@ server3_3_lookup (rpcsvc_request_t *req)
                 frame->root->op = GF_FOP_DISCOVER;
                 resolve_and_resume (frame, server_discover_resume);
         }
-        
+
 
         return ret;
 out:
