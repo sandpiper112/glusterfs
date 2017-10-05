@@ -1,7 +1,7 @@
 #!/bin/bash
 
-. $(dirname $0)/../include.rc
-. $(dirname $0)/../volume.rc
+. $(dirname $0)/../../include.rc
+. $(dirname $0)/../../volume.rc
 
 cleanup;
 
@@ -12,7 +12,7 @@ TEST pidof glusterd
 brick_list=$(echo $H0:$B0/${V0}{1..5})
 
 # The helper script creates the volume as well, at present
-$PYTHON $(dirname $0)/../../xlators/experimental/rio/scripts/rio-volfile-generator/GlusterCreateVolume.py $V0 2 3 "$brick_list"
+$PYTHON $(dirname $0)/../../../xlators/experimental/rio/scripts/rio-volfile-generator/GlusterCreateVolume.py $V0 2 3 "$brick_list" --force
 
 EXPECT "$V0" volinfo_field $V0 'Volume Name'
 EXPECT 'Created' volinfo_field $V0 'Status'
@@ -26,5 +26,15 @@ EXPECT 'Started' volinfo_field $V0 'Status'
 
 ## Mount FUSE
 TEST $GFS -s $H0 --volfile-id $V0 $M0
+
+# empty file creations
+TEST touch $M0/f{0..300}
+
+# stat() check
+TEST stat $M0/f{0..300}
+
+# NOTE: no umoun test as there's a segfault due to missing statfs() implementation
+#       in posix, v2.
+# TEST umount $M0
 
 cleanup;
