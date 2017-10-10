@@ -2656,5 +2656,9 @@ struct volume_options options[] = {
           .flags         = OPT_FLAG_SETTABLE | OPT_FLAG_DOC,
           .tags          = {"backup"},
         },
+        { .key           = {"brick-path"},
+          .type          = GF_OPTION_TYPE_PATH,
+          .default_value = "{{ brick.path }}"
+        },
         { .key           = {NULL} },
 };
