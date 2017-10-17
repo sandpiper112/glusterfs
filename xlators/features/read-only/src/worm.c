@@ -643,4 +643,6 @@ struct volume_options options[] = {
           .flags = OPT_FLAG_SETTABLE,
           .description = "Auto commit period for the files."
         },
+        { .key  = {NULL}
+        },
 };
