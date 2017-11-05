@@ -98,6 +98,7 @@ enum argp_option_keys {
 #endif
         ARGP_SUBDIR_MOUNT_KEY             = 177,
         ARGP_DISABLE_LATENCY_MONITORING_KEY = 178,
+        ARGP_FUSE_LRU_LIMIT_KEY           = 179,
 };
 
 struct _gfd_vol_top_priv {

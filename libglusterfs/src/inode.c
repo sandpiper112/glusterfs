@@ -41,6 +41,20 @@ __inode_unref (inode_t *inode);
 
 static int
 inode_table_prune (inode_table_t *table);
+static int
+inode_table_prune_with_ops (inode_table_t *table, prune_ops_t *prune_ops);
+
+static int
+prune_init_standard (inode_table_t *table, void **prune_thing_p);
+static int
+prune_do_standard (inode_table_t *table, int ret, void *prune_thing);
+static int
+prune_fini_standard (inode_table_t *table, int ret, void *prune_thing);
+prune_ops_t prune_ops_standard = {
+        .prune_init = prune_init_standard,
+        .prune_do   = prune_do_standard,
+        .prune_fini = prune_fini_standard,
+};
 
 void
 fd_dump (struct list_head *head, char *prefix);
@@ -545,7 +559,7 @@ __inode_ref (inode_t *inode)
 
 
 inode_t *
-inode_unref (inode_t *inode)
+inode_unref_with_prune_ops (inode_t *inode, prune_ops_t *prune_ops)
 {
         inode_table_t *table = NULL;
 
@@ -560,9 +574,22 @@ inode_unref (inode_t *inode)
         }
         pthread_mutex_unlock (&table->lock);
 
-        inode_table_prune (table);
+        inode_table_prune_with_ops (table, prune_ops);
 
         return inode;
+}
+
+inode_t *
+inode_unref (inode_t *inode)
+{
+        inode_table_t *table = NULL;
+
+        if (!inode)
+                return NULL;
+
+        table = inode->table;
+
+        return inode_unref_with_prune_ops (inode, table->prune_ops);
 }
 
 
@@ -1533,39 +1560,29 @@ inode_table_set_lru_limit (inode_table_t *table, uint32_t lru_limit)
 }
 
 static int
-inode_table_prune (inode_table_t *table)
+inode_table_prune_with_ops (inode_table_t *table, prune_ops_t *prune_ops)
 {
         int               ret = 0;
         struct list_head  purge = {0, };
         inode_t          *del = NULL;
         inode_t          *tmp = NULL;
-        inode_t          *entry = NULL;
+        void             *prune_thing = NULL;
 
         if (!table)
                 return -1;
 
         INIT_LIST_HEAD (&purge);
 
+        if (table->lru_limit) {
+                ret = prune_ops->prune_init (table, &prune_thing);
+                if (ret == -1)
+                        return -1;
+        }
+
         pthread_mutex_lock (&table->lock);
         {
-                while (table->lru_limit
-                       && table->lru_size > (table->lru_limit)) {
-                        if (list_empty (&table->lru)) {
-                                gf_msg_callingfn (THIS->name, GF_LOG_WARNING, 0,
-                                                  LG_MSG_INVALID_INODE_LIST,
-                                                  "Empty inode lru list found"
-                                                  " but with (%d) lru_size",
-                                                  table->lru_size);
-                                break;
-                        }
-
-                        entry = list_entry (table->lru.next, inode_t, list);
-
-                        table->lru_size--;
-                        __inode_retire (entry);
-
-                        ret++;
-                }
+                if (table->lru_limit)
+                        ret = prune_ops->prune_do (table, ret, prune_thing);
 
                 list_splice_init (&table->purge, &purge);
                 table->purge_size = 0;
@@ -1580,7 +1597,54 @@ inode_table_prune (inode_table_t *table)
                 }
         }
 
+        if (table->lru_limit)
+                ret = prune_ops->prune_fini (table, ret, prune_thing);
+
         return ret;
+}
+
+static int
+prune_init_standard (inode_table_t *table, void **prune_thing_p)
+{
+        return 0;
+}
+
+static int
+prune_do_standard (inode_table_t *table, int ret, void *prune_thing)
+{
+        inode_t *entry = NULL;
+
+        while (table->lru_size > (table->lru_limit)) {
+                if (list_empty (&table->lru)) {
+                        gf_msg_callingfn (THIS->name, GF_LOG_WARNING, 0,
+                                          LG_MSG_INVALID_INODE_LIST,
+                                          "Empty inode lru list found"
+                                          " but with (%d) lru_size",
+                                          table->lru_size);
+                        break;
+                }
+
+                entry = list_entry (table->lru.next, inode_t, list);
+
+                table->lru_size--;
+                __inode_retire (entry);
+
+                ret++;
+        }
+
+        return ret;
+}
+
+static int
+prune_fini_standard (inode_table_t *table, int ret, void *prune_thing)
+{
+        return 0;
+}
+
+static int
+inode_table_prune (inode_table_t *table)
+{
+        return inode_table_prune_with_ops (table, table->prune_ops);
 }
 
 
@@ -1605,7 +1669,7 @@ __inode_table_init_root (inode_table_t *table)
 
 
 inode_table_t *
-inode_table_new (size_t lru_limit, xlator_t *xl)
+inode_table_new_with_prune_ops (size_t lru_limit, xlator_t *xl, prune_ops_t *prune_ops)
 {
         inode_table_t *new = NULL;
         int            ret = -1;
@@ -1617,6 +1681,8 @@ inode_table_new (size_t lru_limit, xlator_t *xl)
 
         new->xl = xl;
         new->ctxcount = xl->graph->xl_count + 1;
+
+        new->prune_ops = prune_ops;
 
         new->lru_limit = lru_limit;
 
@@ -1697,6 +1763,12 @@ out:
         }
 
         return new;
+}
+
+inode_table_t *
+inode_table_new (size_t lru_limit, xlator_t *xl)
+{
+        return inode_table_new_with_prune_ops (lru_limit, xl, &prune_ops_standard);
 }
 
 int

@@ -280,6 +280,30 @@ send_fuse_data (xlator_t *this, fuse_in_header_t *finh, void *data, size_t size)
 
 
 #if FUSE_KERNEL_MINOR_VERSION >= 11
+static int
+prune_noop_init (inode_table_t *table, void **prune_thing_p)
+{
+        return 0;
+}
+
+static int
+prune_noop_do (inode_table_t *table, int ret, void *prune_thing)
+{
+        return ret;
+}
+
+static int
+prune_noop_fini (inode_table_t *table, int ret, void *prune_thing)
+{
+        return ret;
+}
+
+static prune_ops_t prune_noops = {
+        .prune_init = prune_noop_init,
+        .prune_do   = prune_noop_do,
+        .prune_fini = prune_noop_fini,
+};
+
 static void
 fuse_invalidate_entry (xlator_t *this, uint64_t fuse_ino)
 {
@@ -344,7 +368,7 @@ fuse_invalidate_entry (xlator_t *this, uint64_t fuse_ino)
         }
 
         if (inode)
-                inode_unref (inode);
+                inode_unref_with_prune_ops (inode, &prune_noops);
 }
 #endif
 
@@ -692,7 +716,7 @@ do_forget(xlator_t *this, uint64_t unique, uint64_t nodeid, uint64_t nlookup)
 		    unique, nodeid, nlookup, uuid_utoa(fuse_inode->gfid));
 
 	inode_forget(fuse_inode, nlookup);
-	inode_unref(fuse_inode);
+	inode_unref_with_prune_ops (fuse_inode, &prune_ops_standard);
 }
 
 static void
@@ -5194,6 +5218,69 @@ dump_history_fuse (circular_buffer_t *cb, void *data)
         return 0;
 }
 
+static int
+fuse_prune_init (inode_table_t *table, void **prune_thing_p)
+{
+        int ret = 0;
+        uint64_t *nodeid_buf = NULL;
+
+        ret = table->lru_size - table->lru_limit;
+        if (ret <= 0)
+                return 0;
+
+        nodeid_buf = GF_CALLOC (ret, sizeof (uint64_t), gf_fuse_mt_prune_buf_t);
+        if (!nodeid_buf)
+                return -1;
+
+        *prune_thing_p = nodeid_buf;
+
+        return ret;
+}
+
+static int
+fuse_prune_do (inode_table_t *table, int ret, void *prune_thing)
+{
+        int       i = 0;
+        inode_t  *entry = NULL;
+        uint64_t *nodeid_buf = prune_thing;
+
+        for (i = 0; i < ret; i++) {
+                if (list_empty (&table->lru)) {
+                        gf_msg_callingfn (THIS->name, GF_LOG_WARNING, 0,
+                                          LG_MSG_INVALID_INODE_LIST,
+                                          "Empty inode lru list found"
+                                          " but with (%d) lru_size",
+                                          table->lru_size);
+                        break;
+                }
+
+                entry = list_entry (table->lru.next, inode_t, list);
+                nodeid_buf[i] = inode_to_fuse_nodeid (entry);
+        }
+
+        return ret;
+}
+
+static int
+fuse_prune_fini (inode_table_t *table, int ret, void *prune_thing)
+{
+        int       i = 0;
+        uint64_t *nodeid_buf = prune_thing;
+
+        for (i = 0; i < ret; i++)
+                fuse_invalidate_entry (THIS, nodeid_buf[i]);
+
+        GF_FREE (nodeid_buf);
+
+        return ret;
+}
+
+static prune_ops_t fuse_prune_ops = {
+        .prune_init = fuse_prune_init,
+        .prune_do   = fuse_prune_do,
+        .prune_fini = fuse_prune_fini,
+};
+
 int
 fuse_graph_setup (xlator_t *this, glusterfs_graph_t *graph)
 {
@@ -5215,7 +5302,9 @@ fuse_graph_setup (xlator_t *this, glusterfs_graph_t *graph)
                         goto unlock;
                 }
 
-                itable = inode_table_new (0, graph->top);
+                itable = inode_table_new_with_prune_ops (priv->lru_limit,
+                                                         graph->top,
+                                                         &fuse_prune_ops);
                 if (!itable) {
                         ret = -1;
                         goto unlock;
@@ -5642,6 +5731,9 @@ init (xlator_t *this_xl)
 
         GF_OPTION_INIT("resolve-gids", priv->resolve_gids, bool, cleanup_exit);
 
+        GF_OPTION_INIT ("lru-limit", priv->lru_limit, uint32,
+                        cleanup_exit);
+
         /* default values seemed to work fine during testing */
         GF_OPTION_INIT ("background-qlen", priv->background_qlen, int32,
                         cleanup_exit);
@@ -5922,6 +6014,11 @@ struct volume_options options[] = {
         { .key = {"enable-ino32"},
           .type = GF_OPTION_TYPE_BOOL,
           .default_value = "false"
+        },
+        { .key  = {"lru-limit"},
+          .type = GF_OPTION_TYPE_INT,
+          .default_value = "0",
+          .min = 0,
         },
         { .key  = {"background-qlen"},
           .type = GF_OPTION_TYPE_INT,

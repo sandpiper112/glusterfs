@@ -34,6 +34,33 @@ typedef struct _dentry dentry_t;
 #include "compat-uuid.h"
 #include "fd.h"
 
+typedef struct {
+        /*
+         * @table->lru_limit > 0 is assumed.
+         *
+         * return value: -1 aborts the prune operation
+         */
+        int (*prune_init) (inode_table_t *table, void **prune_thing_p);
+
+        /*
+         * The core of the prune operation.
+         *
+         * @table->lock is held. @table->lru_limit > 0 is assumed.
+         * @ret: the return value of prune_init()
+         * @prune_thing: the reference set up in prune_init()
+         */
+        int (*prune_do) (inode_table_t *table, int ret, void *prune_thing);
+
+        /*
+         * @table->lru_limit > 0 is assumed.
+         * @ret: the return value of prune_do()
+         * @prune_thing: the reference set up in prune_init()
+         *
+         * return value: it shall be the final return value of the prune operation
+         */
+        int (*prune_fini) (inode_table_t *table, int ret, void *prune_thing);
+} prune_ops_t;
+
 struct _inode_table {
         pthread_mutex_t    lock;
         size_t             hashsize;    /* bucket size of inode hash and dentry hash */
@@ -60,6 +87,8 @@ struct _inode_table {
            bound to an inode */
         gf_atomic_t total_fd;
         gf_atomic_t in_use_fd;
+
+        prune_ops_t       *prune_ops;   /* prune operations */
 };
 
 
@@ -113,8 +142,13 @@ struct _inode {
 #define GFID_STR_PFX "<gfid:" UUID0_STR ">"
 #define GFID_STR_PFX_LEN (sizeof (GFID_STR_PFX) - 1)
 
+prune_ops_t prune_ops_standard;
+
 inode_table_t *
 inode_table_new (size_t lru_limit, xlator_t *xl);
+
+inode_table_t *
+inode_table_new_with_prune_ops (size_t lru_limit, xlator_t *xl, prune_ops_t *prune_ops);
 
 void
 inode_table_destroy_all (glusterfs_ctx_t *ctx);
@@ -140,6 +174,9 @@ inode_ref (inode_t *inode);
 
 inode_t *
 inode_unref (inode_t *inode);
+
+inode_t *
+inode_unref_with_prune_ops (inode_t *inode, prune_ops_t *prune_ops);
 
 int
 inode_lookup (inode_t *inode);
